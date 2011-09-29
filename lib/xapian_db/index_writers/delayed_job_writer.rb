@@ -8,7 +8,6 @@ module XapianDb
 
         handle_asynchronously :index
         handle_asynchronously :delete_doc_with
-        handle_asynchronously :reindex
         handle_asynchronously :reindex_class
 
       end
