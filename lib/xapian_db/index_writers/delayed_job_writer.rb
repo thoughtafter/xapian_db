@@ -1,3 +1,5 @@
+require 'xapian_db/index_writers/direct_writer'
+
 module XapianDb
   module IndexWriters
 
