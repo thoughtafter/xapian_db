@@ -39,6 +39,9 @@ module XapianDb
     # The number of records per page
     attr_reader :limit_value
 
+    # The relevant terms used in find_similar_to
+    attr_reader :relevant_terms
+
     # Constructor
     # @param [Xapian::Enquire] enquiry a Xapian query result (see http://xapian.org/docs/apidoc/html/classXapian_1_1Enquire.html).
     #   Pass nil to get an empty result set.
@@ -57,6 +60,7 @@ module XapianDb
       @hits                = enquiry.mset(0, db_size).matches_estimated
       return build_empty_resultset if @hits == 0
 
+      relevant_terms       = options.delete :relevant_terms
       limit                = options.delete :limit
       page                 = options.delete :page
       per_page             = options.delete :per_page
