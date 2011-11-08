@@ -60,7 +60,7 @@ module XapianDb
       @hits                = enquiry.mset(0, db_size).matches_estimated
       return build_empty_resultset if @hits == 0
 
-      @relevant_terms      = options.delete :relevant_terms
+      @relevant_terms      = options.delete :relevant_terms || []
       limit                = options.delete :limit
       page                 = options.delete :page
       per_page             = options.delete :per_page
