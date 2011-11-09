@@ -84,7 +84,7 @@ module XapianDb
                # retrieve the class and id from data
                klass_name, id = data.split("-")
                klass =  constantize klass_name
-               @indexed_object = klass.find(id.to_i)
+               @indexed_object = klass.find_by_id(id.to_i)
              end
 
            end
