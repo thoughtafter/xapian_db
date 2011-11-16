@@ -1,3 +1,24 @@
+##1.2.2 (November 15th, 2011)
+
+Features:
+
+  - resultset accepts limit and paging options as strings
+  - added natural sort order option for blueprints (see README for details)
+
+IMPORTANT: FULL INDEX REBUILD REQUIRED FOR THIS RELEASE!
+
+##1.2.1.1 (November 10th, 2011)
+
+Fixes:
+
+  - resque writer wasn't loaded when beanstalk wasn't installed (thanks, javierv)
+
+##1.2.1 (November 9th, 2011)
+
+Fixes:
+
+  - removed explicit dependency on resque
+
 ##1.2.0 (November 8th, 2011)
 
 Fixes:
