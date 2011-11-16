@@ -2,6 +2,8 @@
 # This writer uses resque to enqueue index jobs
 # @author Michael Stämpfli
 
+require 'resque'
+
 module XapianDb
   module IndexWriters
     class ResqueWriter
