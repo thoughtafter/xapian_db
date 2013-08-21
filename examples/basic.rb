@@ -4,9 +4,14 @@
 # To run the example, please install the xapian_db gem first
 
 require 'rubygems'
+require 'date'
 require 'xapian_db'
 
 puts "Setting up the demo..."
+
+XapianDb::Config.setup do |config|
+  config.adapter :generic
+end
 
 # 1: Open an in memory database
 db = XapianDb.create_db
@@ -32,7 +37,7 @@ end
 # the structure of all documents for our class. Attribute values can
 # be accessed later for each retrieved doc. Attributes are indexed
 # by default.
-XapianDb::DocumentBlueprint.setup(Person) do |blueprint|
+XapianDb::DocumentBlueprint.setup(:Person) do |blueprint|
   blueprint.attribute :name
   blueprint.attribute :first_name
   blueprint.attribute :date_of_birth, :as => :date
@@ -44,7 +49,7 @@ person_2 = Person.new :id => 2, :name => "Smith",  :first_name => "Frank", :date
 person_3 = Person.new :id => 3, :name => "Willis", :first_name => "Frank", :date_of_birth => Date.new(1968, 11, 4)
 
 # 6: Now add them to the database
-blueprint = XapianDb::DocumentBlueprint.blueprint_for(Person)
+blueprint = XapianDb::DocumentBlueprint.blueprint_for(:Person)
 indexer   = XapianDb::Indexer.new(db, blueprint)
 db.store_doc(indexer.build_document_for(person_1))
 db.store_doc(indexer.build_document_for(person_2))
@@ -61,8 +66,8 @@ puts "first name: #{doc.first_name}"
 puts "date of birth: #{doc.date_of_birth.strftime("%d.%m.%Y")}"
 
 # Get all facets (classes) for a search expression
-facets = db.facets("Frank")
+facets = db.facets(:first_name, "Frank")
 puts "facets:"
-facets.each do |klass, count|
-  puts "#{klass.name}: #{count} hits"
+facets.each do |value, count|
+  puts "#{value}: #{count} hits"
 end

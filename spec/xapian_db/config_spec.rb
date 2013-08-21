@@ -27,19 +27,15 @@ describe XapianDb::Config do
         db_path = "/tmp/xapian_db"
         FileUtils.rm_rf db_path
 
+        XapianDb.should_receive :create_db
         XapianDb::Config.setup do |config|
           config.database db_path
         end
 
-        # Put a doc into the database
-        doc = Xapian::Document.new
-        XapianDb.database.store_doc(doc).should be_true
-
-        # Now reopen the database
+        XapianDb.should_receive :open_db
         XapianDb::Config.setup do |config|
           config.database db_path
         end
-        XapianDb.database.size.should == 1 # The doc should still be there
       end
 
       it "handles the existence of an empty index directory gracefully" do
@@ -114,6 +110,17 @@ describe XapianDb::Config do
         end
       end
 
+      it "accepts the sidekiq writer, if the sidekiq gem is installed" do
+        if defined? XapianDb::IndexWriters::SidekiqWriter
+          XapianDb::Config.setup do |config|
+            config.writer :sidekiq
+          end
+          XapianDb::Config.writer.should == XapianDb::IndexWriters::SidekiqWriter
+        else
+          pending "cannot run this spec without the sidekiq gem installed"
+        end
+      end
+
       it "raises an error if the configured writer is unknown" do
         lambda{XapianDb::Config.setup do |config|
           config.writer :unknown
@@ -182,6 +189,47 @@ describe XapianDb::Config do
       end
 
     end
-  end
 
+    describe ".term_min_length" do
+      it "accepts a number for the min length of the indexed terms" do
+        XapianDb::Config.setup do |config|
+          config.term_min_length 2
+        end
+        XapianDb::Config.term_min_length.should == 2
+      end
+    end
+
+    describe ".term_splitter_count" do
+      it "accepts a number for the term splitter size" do
+        XapianDb::Config.setup do |config|
+          config.term_splitter_count 3
+        end
+        XapianDb::Config.term_splitter_count.should == 3
+      end
+
+      it "defaults to 0" do
+        XapianDb::Config.term_splitter_count.should == 0
+      end
+    end
+
+    describe ".enable_query_flag <QUERY_FLAG>" do
+      it "adds the query flag to the enabled flags collection" do
+        XapianDb::Config.setup do |config|
+          config.enable_query_flag Xapian::QueryParser::FLAG_PHRASE
+        end
+        XapianDb::Config.query_flags.should include(Xapian::QueryParser::FLAG_PHRASE)
+      end
+    end
+
+    describe ".disable_query_flag <QUERY_FLAG>" do
+      it "removes the query flag from the enabled flags collection" do
+        XapianDb::Config.instance_variable_set :@_enabled_query_flags, [Xapian::QueryParser::FLAG_WILDCARD]
+        XapianDb::Config.setup do |config|
+          config.disable_query_flag Xapian::QueryParser::FLAG_WILDCARD
+        end
+        XapianDb::Config.query_flags.should_not include(Xapian::QueryParser::FLAG_WILDCARD)
+      end
+    end
+
+  end
 end

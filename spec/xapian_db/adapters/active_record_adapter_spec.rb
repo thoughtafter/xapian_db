@@ -5,6 +5,7 @@
 # @author Gernot Kogler
 
 require File.expand_path(File.dirname(__FILE__) + '/../../spec_helper')
+require File.expand_path(File.dirname(__FILE__) + '/../../../lib/xapian_db/adapters/active_record_adapter.rb')
 
 describe XapianDb::Adapters::ActiveRecordAdapter do
 
@@ -15,7 +16,7 @@ describe XapianDb::Adapters::ActiveRecordAdapter do
       config.writer  :direct
     end
 
-    XapianDb::DocumentBlueprint.setup(ActiveRecordObject) do |blueprint|
+    XapianDb::DocumentBlueprint.setup(:ActiveRecordObject) do |blueprint|
       blueprint.index :name
     end
   end
@@ -37,6 +38,14 @@ describe XapianDb::Adapters::ActiveRecordAdapter do
 
     it "adds an after save hook to the configured class" do
       ActiveRecordObject.hooks[:after_save].should be_a_kind_of(Proc)
+    end
+
+    it "does not add an after save hook if autoindexing is turned off for this blueprint" do
+      ActiveRecordObject.reset
+      XapianDb::DocumentBlueprint.setup(:ActiveRecordObject) do |blueprint|
+        blueprint.autoindex false
+      end
+      ActiveRecordObject.hooks[:after_save].should_not be
     end
 
     it "adds an after destroy hook to the configured class" do
@@ -84,13 +93,19 @@ describe XapianDb::Adapters::ActiveRecordAdapter do
   end
 
   describe "the after commit hook" do
-    it "should (re)index the object" do
+
+    it "should not (re)index the object, if it is a destroy transaction" do
+      XapianDb.should_not_receive(:reindex)
+      object.destroy
+    end
+
+    it "should (re)index the object, if it is a create/update action" do
+      XapianDb.should_receive(:reindex)
       object.save
-      XapianDb.search("Kogler").size.should == 1
     end
 
     it "should not index the object if an ignore expression in the blueprint is met" do
-      XapianDb::DocumentBlueprint.setup(ActiveRecordObject) do |blueprint|
+      XapianDb::DocumentBlueprint.setup(:ActiveRecordObject) do |blueprint|
         blueprint.index :name
         blueprint.ignore_if {name == "Kogler"}
       end
@@ -99,7 +114,7 @@ describe XapianDb::Adapters::ActiveRecordAdapter do
     end
 
     it "should index the object if an ignore expression in the blueprint is not met" do
-      XapianDb::DocumentBlueprint.setup(ActiveRecordObject) do |blueprint|
+      XapianDb::DocumentBlueprint.setup(:ActiveRecordObject) do |blueprint|
         blueprint.index :name
         blueprint.ignore_if {name == "not Kogler"}
       end
@@ -163,7 +178,7 @@ describe XapianDb::Adapters::ActiveRecordAdapter do
       end
       XapianDb.search("Kogler").size.should == 0
 
-      XapianDb::DocumentBlueprint.setup(ActiveRecordObject) do |blueprint|
+      XapianDb::DocumentBlueprint.setup(:ActiveRecordObject) do |blueprint|
         blueprint.index :name
         blueprint.ignore_if {name == "Kogler"}
       end

@@ -1,9 +1,5 @@
 = XapianDb
 
-== Important Information
-
-If you upgrade from an earlier version of xapian_db to 1.1, you MUST rebuild your entire index (XapianDb.rebuild_xapian_index)!
-
 == What's in the box?
 
 XapianDb is a ruby gem that combines features of nosql databases and fulltext indexing into one piece. The result: Rich documents and very fast queries. It is based on {Xapian}[http://xapian.org/], an efficient and powerful indexing library.
@@ -38,6 +34,13 @@ I tried hard but I couldn't find such a thing so I decided to write it, based on
 
 * ruby 1.9.2 or newer
 * rails 3.0 or newer (if you want to use it with rails)
+* xapian-core and xapian-ruby binaries installed
+
+== Installing xapian binaries
+
+On OSX, I recommend to install the binaries using homebrew like so: brew install xapian --ruby.
+Another option is to install and require the xapian-ruby gem; this works for linux, too. Make sure to add the gem to your Gemfile in this case.
+Make sure version 1.2.6 or newer is installed.
 
 == Getting started
 
@@ -60,6 +63,8 @@ You can override these defaults by placing a config file named 'xapian_db.yml' i
   defaults: &defaults
     adapter: datamapper # Avaliable adapters: :active_record, :datamapper
     language: de        # Global language; can be overridden for specific blueprints
+    term_min_length: 2  # Ignore single character terms
+    enable_query_flags: FLAG_PHRASE, FLAG_SPELLING_CORRECTION
 
   development:
     database: db/xapian_db/development
@@ -73,13 +78,32 @@ You can override these defaults by placing a config file named 'xapian_db.yml' i
     database: db/xapian_db/production
     <<: *defaults
 
+==== Available options
+
+  - adapter: :active_record|:datamapper, default: :active_record
+  - language: any iso language code, default: :none (activates spelling corrections, stemmer and stop words if an iso language code ist set)
+  - term_min_length: <n>, default: 1 (do not index terms shorter than n)
+  - term_splitter_count: <n>, default: 0 (see chapter Term Splitting)
+  - enabled_query_flags: <list of flags, separated by colons>
+  - disabled_query_flags: <list of flags, separated by colons>
+
+  The following query flags are enabled by default:
+
+    - FLAG_WILDCARD
+    - FLAG_BOOLEAN
+    - FLAG_BOOLEAN_ANY_CASE
+    - FLAG_SPELLING_CORRECTION
+
+  See the xapian docs for all available query flags; if you use the enabled_query_flags option, you must list all query flags that you want to enable since enabled_query_flags overwrites the defaults
+
 If you do not configure settings for an environment in this file, xapian_db applies the defaults.
 
 === Configure an index blueprint
 
-In order to get your models indexed, you must configure a document blueprint for each class you want to index:
+In order to get your models indexed, you must configure a document blueprint for each class you want to index. You can pass the class name as a
+symbol or as a string (if the class is namespaced):
 
-  XapianDb::DocumentBlueprint.setup(Person) do |blueprint|
+  XapianDb::DocumentBlueprint.setup(:Person) do |blueprint|
     blueprint.attribute :name, :weight => 10
     blueprint.attribute :first_name
   end
@@ -93,7 +117,7 @@ If you want to index additional data but do not need access to it from a search 
 
 If you want to declare multiple attributes or indexes with default options, you can do this in one statement:
 
-  XapianDb::DocumentBlueprint.setup(Person) do |blueprint|
+  XapianDb::DocumentBlueprint.setup(:Person) do |blueprint|
     blueprint.attributes :name, :first_name, :profession
     blueprint.index      :notes, :remarks, :cv
   end
@@ -102,7 +126,7 @@ Note that you cannot add options using this mass declaration syntax (e.g. <code>
 
 Use blocks for complex evaluations of attributes or indexed values:
 
-  XapianDb::DocumentBlueprint.setup(IndexedObject) do |blueprint|
+  XapianDb::DocumentBlueprint.setup(:IndexedObject) do |blueprint|
     blueprint.attribute :complex do
       if @id == 1
         "One"
@@ -114,52 +138,77 @@ Use blocks for complex evaluations of attributes or indexed values:
 
 You may add a filter expression to exclude objects from the index. This is handy to skip objects that are not active, for example:
 
-    XapianDb::DocumentBlueprint.setup(Person) do |blueprint|
+    XapianDb::DocumentBlueprint.setup(:Person) do |blueprint|
       blueprint.attributes :name, :first_name, :profession
       blueprint.index      :notes, :remarks, :cv
       blueprint.ignore_if {active == false}
     end
 
-You can add a type information to an attribute. As of now the special types :string, :date and :number are supported (and required for range queries):
+You can add a type information to an attribute (default format is string). As of now the special types :string, :date, :date_time and :number are supported (and required for range queries):
 
-    XapianDb::DocumentBlueprint.setup(Person) do |blueprint|
+    XapianDb::DocumentBlueprint.setup(:Person) do |blueprint|
       blueprint.attribute :age,           :as => :number
       blueprint.attribute :date_of_birth, :as => :date
       blueprint.attribute :name,          :as => :string
+      blueprint.attribute :updated_at,    :as => :date_time
+      blueprint.attribute :address,       :as => :json
+    end
+
+If you don't need field searches for an attribute, turn off the prefixed option (makes your index smaller and more efficient):
+
+    XapianDb::DocumentBlueprint.setup(:Person) do |blueprint|
+      blueprint.attribute :complex_object, prefixed: false
     end
 
 You can override the global adapter configuration in a specific blueprint. Let's say you use ActiveRecord, but you have
 one more class that is not stored in the database, but you want it to be indexed:
 
-  XapianDb::DocumentBlueprint.setup(SpecialClass) do |blueprint|
+  XapianDb::DocumentBlueprint.setup(:SpecialClass) do |blueprint|
     blueprint.adapter :generic
     blueprint.index   :some_stuff
   end
 
 If you use associations in your blueprints, it might be a good idea to specify a base query to speed up rebuild_xapian_index calls (avoiding 1+n queries):
 
-  XapianDb::DocumentBlueprint.setup(Person) do |blueprint|
-    blueprint.index :addresses
-    blueprint.base_query Person.includes(:addresses)
+  XapianDb::DocumentBlueprint.setup(:Person) do |blueprint|
+    blueprint.index :addresses, as: :json
+    blueprint.base_query { |p| p.includes(:addresses) }
   end
+
+If you have configured a term_splitter_count, you might want to exclude certain attributes from the automatic term splitting:
+
+    XapianDb::DocumentBlueprint.setup(:Person) do |blueprint|
+      blueprint.attribute :age, :as => :number, :no_split => true
+    end
 
 You can specify a natural sort order for each class using a method symbol or a block. If you don't specify an order expression in your xapian query, the matches
 are ordered by relevance and - within the same relevance - by the natural sort order. If you don't specify the natural sort order, it defaults to id. Examples:
 
-  XapianDb::DocumentBlueprint.setup(House) do |blueprint|
+  XapianDb::DocumentBlueprint.setup(:House) do |blueprint|
     blueprint.natural_sort_order :number
   end
 
-  XapianDb::DocumentBlueprint.setup(Person) do |blueprint|
+  XapianDb::DocumentBlueprint.setup(:Person) do |blueprint|
     blueprint.natural_sort_order do
       "#{surname} #{name}"
     end
   end
 
+If you want to manage the (re)indexing of your objects on your own, turn off autoindexing in your blueprint:
+
+  XapianDb::DocumentBlueprint.setup(:Person) do |blueprint|
+    blueprint.autoindex false
+  end
+
+This will turn off the auto-reindexing for any object of the configured class. Use XapianDb.reindex(object) to trigger the reindexing logic in your code. Please note that destroying an object will always remove it from the xapian index.
+
+
 Place these configurations either into the corresponding class or - I prefer to have the index configurations outside
 the models - into the file config/xapian_blueprints.rb.
 
-IMPORTANT: Do not place them into an initializer, this will not work when cache_classes is set to false (default in config/development.rb).
+<b>IMPORTANT</b>
+- Do not place them into an initializer, this will not work when cache_classes is set to false (default in config/development.rb)
+- Whenever you make a change to a blueprint configuration, you must rebuild your entire xapian index
 
 === Update the index
 
@@ -201,7 +250,7 @@ You can query objects of a specific class:
 
   results = Person.search "name:Foo"
 
-You can search for exact phrases:
+You can search for exact phrases (if the query flag is turned on):
 
   results = XapianDb.search('"this exact sentence"')
 
@@ -220,7 +269,7 @@ On class queries you can specifiy order options:
 
 If you define an attribute with a supported type, you can do range searches:
 
-  XapianDb::DocumentBlueprint.setup(Person) do |blueprint|
+  XapianDb::DocumentBlueprint.setup(:Person) do |blueprint|
     blueprint.attribute :age,           :as => :number
     blueprint.attribute :date_of_birth, :as => :date
     blueprint.attribute :name,          :as => :string
@@ -257,7 +306,8 @@ The results behave like an array:
   doc = results.first
   puts doc.score.to_s         # Get the relevance of the document
   puts doc.indexed_class      # Get the type of the indexed object as a string, e.g. "Person"
-  puts doc.name               # We can access the configured attributes
+  puts doc.name               # We can access a single attribute
+  puts doc.attributes         # We can access all attributes as a hash
   person = doc.indexed_object # Access the object behind this doc (lazy loaded)
 
 Use a search result with will_paginate in a view:
@@ -336,15 +386,19 @@ you can use the auto_indexing_disabled method with a block and rebuild the whole
 
 == Add your own serializers for special objects
 
-XapianDb serializes objects to xapian documents using YAML by default. This way, type information is preserved und you get back what you put into a xapian document, not just a string.
+XapianDb serializes objects to xapian documents as strings by default.
 
 However, dates need special handling to support date range queries. To support date range queries and allow the addition of other custom data types in the future, XapianDb uses a simple, extensible mechanism to serialize / deserialize your objects. An example on how to extend this mechanism is provided in examples/custom_serialization.rb.
+
+== Term Splitting
+
+If you want to build a realtime search showing results while the user types, you might experience very poor performance and a huge memory load for the first typed characters (1*, 12*...). XapianDb allows you to configure the term_splitter_count to avoid this. If you configure a term_splitter_count of e.g. 2, the term "test" will get indexed with "t", "te" and "test". Now you can apply the "*" only for search terms that are longer than the configured term_splitter_count resulting in a much better performance and lower memory footprint.
 
 == Production setup
 
 Since Xapian allows only one database instance to write to the index, the default setup of XapianDb will not work
 with multiple app instances trying to write to the same database (you will get lock errors).
-Therefore, XapianDb provides two solutions based on queueing systems to overcome this. The first solution uses beanstalk and the second one uses resque.
+Therefore, XapianDb provides three solutions based on queueing systems to overcome this. The first solution uses beanstalk, the second one uses resque and the third uses sidekiq.
 
 == Installation with beanstalk
 
@@ -433,3 +487,27 @@ Be sure to specify the correct queue name when starting the worker.
 
 <b>If you don't provide a queue name, it WON'T take 'xapian_db' by default! Do not start multiple
 instances of this worker!</b>
+
+== Installation with Sidekiq
+
+=== 1. Install and start redis
+
+Install and start redis as described on the {resque github page}[https://github.com/defunkt/resque].
+
+=== 2. Add the sidekiq gem to your config
+
+  gem 'sidekiq'
+  bundle install
+
+=== 3. Configure XapianDb to use sidekiq in production
+
+  production:
+    database:     db/xapian_db/production
+    writer:       sidekiq
+    sidekiq_queue: my_queue
+
+If you don't specify a queue name XapianDb will use 'xapian_db' by default.
+
+=== 4. Start sidekiq
+
+  RAILS_ENV=production bundle exec sidekiq

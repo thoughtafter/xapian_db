@@ -48,13 +48,34 @@ module XapianDb
       def resque_queue
         @config.instance_variable_get("@_resque_queue") || 'xapian_db'
       end
+
+      def sidekiq_queue
+        @config.instance_variable_get("@_sidekiq_queue") || 'xapian_db'
+      end
+
+      def term_min_length
+        @config.instance_variable_get("@_term_min_length") || 1
+      end
+
+      def term_splitter_count
+        @config.instance_variable_get("@_term_splitter_count") || 0
+      end
+
+      def query_flags
+        @config.instance_variable_get("@_enabled_query_flags") || [ Xapian::QueryParser::FLAG_WILDCARD,
+                                                                    Xapian::QueryParser::FLAG_BOOLEAN,
+                                                                    Xapian::QueryParser::FLAG_BOOLEAN_ANY_CASE,
+                                                                    Xapian::QueryParser::FLAG_SPELLING_CORRECTION
+                                                                  ]
+      end
     end
 
     # ---------------------------------------------------------------------------------
     # DSL methods
     # ---------------------------------------------------------------------------------
 
-    attr_reader :_database, :_adapter, :_writer, :_beanstalk_daemon, :_resque_queue, :_stemmer, :_stopper
+    attr_reader :_database, :_adapter, :_writer, :_beanstalk_daemon, :_resque_queue, :_sidekiq_queue, 
+                :_stemmer, :_stopper, :_term_min_length, :_term_splitter_count, :_enabled_query_flags
 
     # Set the global database to use
     # @param [String] path The path to the database. Either apply a file sytem path or :memory
@@ -85,17 +106,29 @@ module XapianDb
     #   - :active_record ({XapianDb::Adapters::ActiveRecordAdapter})
     #   - :datamapper ({XapianDb::Adapters::DatamapperAdapter})
     def adapter(type)
-      # We try to guess the adapter name
-      @_adapter = XapianDb::Adapters.const_get("#{camelize(type.to_s)}Adapter")
+      begin
+        @_adapter = XapianDb::Adapters.const_get("#{camelize(type.to_s)}Adapter")
+      rescue NameError
+        require File.dirname(__FILE__) + "/adapters/#{type}_adapter"
+        @_adapter = XapianDb::Adapters.const_get("#{camelize(type.to_s)}Adapter")
+      end
     end
 
     # Set the index writer
     # @param [Symbol] type The writer type; the following adapters are available:
     #   - :direct ({XapianDb::IndexWriters::DirectWriter})
     #   - :beanstalk ({XapianDb::IndexWriters::BeanstalkWriter})
+    #   - :resque ({XapianDb::IndexWriters::ResqueWriter})
+    #   - :sidekiq ({XapianDb::IndexWriters::SidekiqWriter})
     def writer(type)
       # We try to guess the writer name
-      @_writer = XapianDb::IndexWriters.const_get("#{camelize(type.to_s)}Writer")
+      begin
+        require File.dirname(__FILE__) + "/index_writers/#{type}_writer"
+        @_writer = XapianDb::IndexWriters.const_get("#{camelize(type.to_s)}Writer")
+      rescue LoadError
+        puts "XapianDb: cannot load #{type} writer; see README for supported writers and how to install neccessary queue infrastructure"
+        raise
+      end
     end
 
     # Set the url and port of the beanstalk daemon
@@ -108,6 +141,12 @@ module XapianDb
     # @param [String] name The name of the resque queue
     def resque_queue(name)
       @_resque_queue = name
+    end
+
+    # Set the name of the sidekiq queue
+    # @param [String] name The name of the sidekiq queue
+    def sidekiq_queue(name)
+      @_sidekiq_queue = name
     end
 
     # Set the language.
@@ -123,6 +162,26 @@ module XapianDb
       @_stopper = lang == :none ? nil : XapianDb::Repositories::Stopper.stopper_for(lang)
     end
 
-  end
+    # Set minimum length a term must have to get indexed; 2 is a good value to start
+    # @param [Integer] length The minimum length
+    def term_min_length(length)
+      @_term_min_length = length
+    end
 
+    def term_splitter_count(count)
+      @_term_splitter_count = count
+    end
+
+    def enable_query_flag(flag)
+      @_enabled_query_flags ||= []
+      @_enabled_query_flags << flag
+      @_enabled_query_flags.uniq!
+    end
+
+    def disable_query_flag(flag)
+      @_enabled_query_flags ||= []
+      @_enabled_query_flags.delete flag
+    end
+
+  end
 end

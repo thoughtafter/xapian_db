@@ -19,7 +19,7 @@ module XapianDb
     # @return [Xapian::Document] The xapian document (see http://xapian.org/docs/sourcedoc/html/classXapian_1_1Document.html)
     def build_document_for(obj)
       @obj = obj
-      @blueprint = DocumentBlueprint.blueprint_for(@obj.class)
+      @blueprint = DocumentBlueprint.blueprint_for(@obj.class.name)
       @xapian_doc = Xapian::Document.new
       @xapian_doc.data = @obj.xapian_id
       store_fields
@@ -52,7 +52,7 @@ module XapianDb
 
         codec          = XapianDb::TypeCodec.codec_for @blueprint.type_map[attribute]
         encoded_string = codec.encode value
-        @xapian_doc.add_value DocumentBlueprint.value_number_for(attribute), encoded_string
+        @xapian_doc.add_value DocumentBlueprint.value_number_for(attribute), encoded_string unless encoded_string.nil?
       end
     end
 
@@ -85,30 +85,47 @@ module XapianDb
         unless obj.nil?
           values = get_values_to_index_from obj
           values.each do |value|
+            terms = value.to_s.downcase
+            terms = split(terms) if XapianDb::Config.term_splitter_count > 0 && !options.no_split
             # Add value with field name
-            term_generator.index_text(value.to_s.downcase, options.weight, "X#{method.upcase}")
+            term_generator.index_text(terms, options.weight, "X#{method.upcase}") if options.prefixed
             # Add value without field name
-            term_generator.index_text(value.to_s.downcase, options.weight)
+            term_generator.index_text(terms, options.weight)
           end
         end
       end
+
+      terms_to_ignore = @xapian_doc.terms.select{ |term| term.term.length < XapianDb::Config.term_min_length }
+      terms_to_ignore.each { |term| @xapian_doc.remove_term term.term }
     end
 
     # Get the values to index from an object
     def get_values_to_index_from(obj)
 
-      # if it's an array, that's fine
-      return obj if obj.is_a? Array
+      # if it's an array, we collect the values for its elements recursive
+      if obj.is_a? Array
+        return obj.map { |element| get_values_to_index_from element }.flatten.compact
+      end
 
       # if the object responds to attributes and attributes is a hash,
       # we use the attributes values (works well for active_record and datamapper objects)
-      return obj.attributes.values if obj.respond_to?(:attributes) && obj.attributes.is_a?(Hash)
+      return obj.attributes.values.compact if obj.respond_to?(:attributes) && obj.attributes.is_a?(Hash)
 
       # The object is unkown and will be indexed by its to_s method; if to_s retruns nil, we
       # will not index it
       obj.to_s.nil? ? [] : [obj]
     end
 
-  end
+    private
 
+    def split(terms)
+      splitted_terms = []
+      terms.split(" ").each do |term|
+        (1..XapianDb::Config.term_splitter_count).each { |i| splitted_terms << term[0...i] }
+        splitted_terms << term
+      end
+      splitted_terms.join " "
+    end
+
+  end
 end

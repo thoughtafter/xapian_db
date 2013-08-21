@@ -1,3 +1,154 @@
+##1.3.5.1 (August 16th, 2013)
+
+Fixes:
+
+  - namespaced models work again with rails 4
+
+##1.3.5 (August 3rd, 2013)
+
+Changes:
+
+  - Rails4 deprecation resolved
+  - licence information added tot the gemspec
+
+##1.3.4 (July 26th, 2013)
+
+Changes:
+
+  - support for sidekiq queues
+
+##1.3.3.1 (June 23th, 2013)
+
+Fixes:
+
+  - injected logical operators must be upper case in order to support Xapian::QueryParser::FLAG_BOOLEAN_ANY_CASE set to false
+
+##1.3.3 (June 23th, 2013)
+
+Changes:
+
+  - xapian query parser flags are now configurable (see README)
+
+Breaking Changes:
+
+- enable_phrase_search config option is no longer supported (use config.enable_query_flag Xapian::QueryParser::FLAG_PHRASE instead)
+
+##1.3.2 (April 10th, 2013)
+
+Changes:
+
+  - new no_split option for attributes and indexes; useful if you use a global term_splitter_count but want to disable splitting for
+    a certain attribute
+
+##1.3.1 (February 25th, 2013)
+
+Fixes:
+
+  - json codec handles nil values gracefully
+
+##1.3 (February 19th, 2013)
+
+Breaking Changes:
+  - changed the internal serialization format for attributes; the new default is string, new codecs were added. YAML is not supported
+    anymore, although you could implement a YAML-Codec on your own if you need it (see examples/custom_serialization.rb)
+
+Changes:
+
+  - New option to enable / disable phrase search support
+  - term splitter option to boost "live queries" (see README)
+
+##1.2.5 (January 4th, 2013)
+
+Changes:
+
+  - Define the min length a term must have to make it into the index (see README)
+  - define if a method should be indexed with its method name so you can do field searches (e.g. name:kogler); defaults to true
+
+Fixes:
+
+  - query result creation optimized (lower memory footprint, better performance)
+
+##1.2.4.7 (December 17th, 2012)
+
+Fixes:
+
+  - database reset removed since it has concurrency problems
+
+##1.2.4.6 (Decmber 17th, 2012)
+
+Changes:
+
+  - progressbar gem replaced by ruby-progressbar
+  - XapianDb.rebuild_xapian_index resets the database to remove any stale index data
+
+##1.2.4.5 (July 19th, 2012)
+
+Fixes:
+
+  - Fixes requiring the environment when calling rake. Prevented eg creation of the database using rake db:create
+
+##1.2.4.4 (May 30h, 2012)
+
+Fixes:
+
+  - do not add attributes with null values to a document
+
+##1.2.4.3 (May 1st, 2012)
+
+Fixes:
+
+  - handle null values on date and datetime attributes correctly
+
+##1.2.4.2 (May 1st, 2012)
+
+Changes:
+
+  - access the attributes of a xapian document as a hash table (like active record)
+
+##1.2.4.1 (April 5th, 2012)
+
+Fixes:
+
+  - better indexing for attributes containing arrays (index rebuild recommended)
+
+##1.2.4 (March 6th, 2012)
+
+Features:
+
+  - Codec for DateTime objects added
+  - autoindex option for blueprints added
+
+Fixes:
+
+  - the ActiveRecord after_commit hook must not reindex the object if it is a destroy action
+
+##1.2.3 (December 12th, 2011)
+
+Changes:
+
+- avoid eager loading of model classes in a rails app. The blueprint configuration file (xapian_blueprints.rb) caused all referenced classes
+  to get loaded and parsed on every request. While not a problem in production environments, it could be a huge performance hit in development
+  (especially when using the asset pipleline with many assets).
+  The solution is based on the proof of concept by [Yves Senn](http://github.com/senny). Simply use symbols or strings instead of the classes in
+  your xapian_blueprints.rb and wrap base_queries inside a block. See the README for updated informations on how to configure blueprints.
+- added a rails example app using datamapper
+- added a rake task to rebuild the index
+- internal refactorings / optimizations
+
+##1.2.2.2 (November 29th, 2011)
+
+Changes:
+
+- removed dependency to xapian-ruby to allow custom installs of the xapian binaries (see chapter Installing xapian binaries in the README)
+
+##1.2.2.1 (November 22th, 2011)
+
+Fixes:
+
+  - always use the correct table name for order clauses when indexing
+  - allow nil values for attributes declared :as => :date
+  - lazy load queue writers (beanstalk_writer, resque_writer) when needed
+
 ##1.2.2 (November 15th, 2011)
 
 Features:

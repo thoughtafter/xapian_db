@@ -5,13 +5,13 @@ module XapianDb
   # A document blueprint describes the mapping of an object to a Xapian document
   # for a given class.
   # @example A simple document blueprint configuration for the class Person
-  #   XapianDb::DocumentBlueprint.setup(Person) do |blueprint|
+  #   XapianDb::DocumentBlueprint.setup(:Person) do |blueprint|
   #     blueprint.attribute       :name, :weight => 10
   #     blueprint.attribute       :first_name
   #     blueprint.index           :remarks
   #   end
   # @example A document blueprint configuration with a complex attribute for the class Person
-  #   XapianDb::DocumentBlueprint.setup(Person) do |blueprint|
+  #   XapianDb::DocumentBlueprint.setup(:Person) do |blueprint|
   #     blueprint.attribute       :complex, :weight => 10 do
   #       # add some logic here to evaluate the value of 'complex'
   #     end
@@ -31,41 +31,68 @@ module XapianDb
       # - adapter (see {#adapter} for details)
       # - attribute (see {#attribute} for details)
       # - index (see {#index} for details)
-      def setup(klass, &block)
+      def setup(klass_or_name, &block)
+        name = class_name_from klass_or_name
+
         @blueprints ||= {}
         blueprint = DocumentBlueprint.new
         yield blueprint if block_given? # configure the blueprint through the block
         validate_type_consistency_on blueprint
+
         # Remove a previously loaded blueprint for this class to avoid stale blueprint definitions
-        @blueprints.delete_if { |indexed_class, blueprint| indexed_class.name == klass.name }
-        @blueprints[klass] = blueprint
-        @_adapter = blueprint._adapter || XapianDb::Config.adapter || Adapters::GenericAdapter
-        @_adapter.add_class_helper_methods_to klass
+        @blueprints.delete_if { |indexed_class, blueprint| indexed_class == name }
+        @blueprints[name] = blueprint
+
+        lazy_load_adapter_for blueprint, name
 
         @searchable_prefixes = @blueprints.values.map { |blueprint| blueprint.searchable_prefixes }.flatten.compact.uniq || []
+
         # We can always do a field search on the name of the indexed class
         @searchable_prefixes << "indexed_class"
         @attributes = @blueprints.values.map { |blueprint| blueprint.attribute_names}.flatten.compact.uniq.sort || []
       end
 
+      # reset the blueprint setup
+      def reset
+        @blueprints = {}
+      end
+
+      # is a blueprint configured for the given name?
+      # @return [Boolean]
+      def configured?(name)
+        @blueprints && @blueprints.has_key?(name.to_s)
+      end
+
       # Get all configured classes
       # @return [Array<Class>]
       def configured_classes
-        @blueprints ? @blueprints.keys : []
+       if @blueprints
+         @blueprints.keys.map {|class_name| XapianDb::Utilities.constantize(class_name) }
+       else
+         []
+       end
       end
 
       # Get the blueprint for a class
       # @return [DocumentBlueprint]
-      def blueprint_for(klass)
+      def blueprint_for(klass_or_name)
         if @blueprints
-          key = klass
-          while key != Object
-            return @blueprints[key] unless @blueprints[key].nil?
-            key = key.superclass
+          if klass_or_name.is_a?(Class)
+            warn "xapian_db: blueprint_for(Class) is deprecated; use blueprint_for(Symbol) or blueprint_for(String) instead"
+            key = klass_or_name.name
+          else
+            key = klass_or_name.to_s
           end
-          raise "Blueprint for class #{klass} is not defined"
+          while key != "Object" && key != "BasicObject"
+            if @blueprints.has_key? key
+              return @blueprints[key]
+            else
+              klass = XapianDb::Utilities.constantize key
+              key = klass.superclass.name
+            end
+          end
         end
-        raise "Blueprint for class #{klass} is not defined"
+        return nil
       end
 
       # Get the value number for an attribute. Please note that this is not the index in the values
@@ -110,6 +137,28 @@ module XapianDb
       end
 
       private
+
+      def class_name_from(klass_or_name)
+        if klass_or_name.is_a?(Class)
+          warn "xapian_db: XapianDb::DocumentBlueprint.setup(Class) is deprecated; use XapianDb::DocumentBlueprint.setup(Symbol) or XapianDb::DocumentBlueprint.setup(String) instead"
+          name = klass_or_name.name
+        else
+          name = klass_or_name.to_s
+        end
+      end
+
+      def lazy_load_adapter_for(blueprint, klass_name)
+        # lazy load the adapter
+        unless defined? blueprint._adapter
+          adapter_file = blueprint._adapter.name.split("::").last.downcase + "_adapter"
+          require File.dirname(__FILE__) + "../adapters/#{adapter_file}"
+        end
+
+        # Needed to add class helper methods to indexed pure ruby classes
+        if eval("defined?(#{klass_name}) && #{klass_name}.is_a?(Class)")
+          blueprint._adapter.add_class_helper_methods_to XapianDb::Utilities.constantize(klass_name)
+        end
+      end
 
       def validate_type_consistency_on(blueprint)
         blueprint.type_map.each do |method_name, type|
@@ -183,6 +232,10 @@ module XapianDb
           @score
         end
 
+        define_method :attributes do
+          blueprint = XapianDb::DocumentBlueprint.blueprint_for indexed_class
+          blueprint.attribute_names.inject({}) { |hash, attr| hash.tap { |hash| hash[attr.to_s] = self.send attr } }
+        end
       end
 
       # Add an accessor for each attribute
@@ -197,8 +250,7 @@ module XapianDb
       end
 
       # Let the adapter add its document helper methods (if any)
-      adapter = @_adapter || XapianDb::Config.adapter || XapianDb::Adapters::GenericAdapter
-      adapter.add_doc_helper_methods_to(@accessors_module)
+      _adapter.add_doc_helper_methods_to(@accessors_module)
       @accessors_module
     end
 
@@ -206,8 +258,7 @@ module XapianDb
     # Blueprint DSL methods
     # ---------------------------------------------------------------------------------
 
-    attr_accessor :_adapter
-    attr_reader :_base_query, :_natural_sort_order
+    attr_reader :lazy_base_query, :_natural_sort_order
 
     # Construct the blueprint
     def initialize
@@ -215,6 +266,7 @@ module XapianDb
       @indexed_methods_hash = {}
       @type_map             = {}
       @_natural_sort_order  = :id
+      @autoindex            = true
     end
 
     # Set the adapter
@@ -227,6 +279,23 @@ module XapianDb
       @_adapter = XapianDb::Adapters.const_get("#{camelize(type.to_s)}Adapter")
     end
 
+    # return the adpater to use for this blueprint
+    def _adapter
+      @_adapter || XapianDb::Config.adapter || XapianDb::Adapters::GenericAdapter
+    end
+
+    # Should objects for this blueprint be automatically reindexed?
+    # @param [Boolean] boolean Yes or no?
+    def autoindex(boolean)
+      @autoindex = boolean
+    end
+
+    # Get the autoindex value
+    # @return [Boolean] The autoindex value
+    def autoindex?
+      @autoindex
+    end
+
     # Add an attribute to the blueprint. Attributes will be stored in the xapian documents an can be
     # accessed from a search result.
     # @param [String] name The name of the method that delivers the value for the attribute
@@ -235,7 +304,7 @@ module XapianDb
     # @option options [Boolean] :index (true) Should the attribute be indexed?
     # @option options [Symbol] :as should add type info for range queries (:date, :numeric)
     # @example For complex attribute configurations you may pass a block:
-    #   XapianDb::DocumentBlueprint.setup(IndexedObject) do |blueprint|
+    #   XapianDb::DocumentBlueprint.setup(:IndexedObject) do |blueprint|
     #     blueprint.attribute :complex do
     #       if @id == 1
     #         "One"
@@ -247,7 +316,7 @@ module XapianDb
     def attribute(name, options={}, &block)
       raise ArgumentError.new("You cannot use #{name} as an attribute name since it is a reserved method name of Xapian::Document") if reserved_method_name?(name)
       do_not_index    = options.delete(:index) == false
-      @type_map[name] = (options.delete(:as) || :generic)
+      @type_map[name] = (options.delete(:as) || :string)
 
       if block_given?
         @attributes_hash[name] = {:block => block}.merge(options)
@@ -264,7 +333,7 @@ module XapianDb
       attributes.each do |attr|
         raise ArgumentError.new("You cannot use #{attr} as an attribute name since it is a reserved method name of Xapian::Document") if reserved_method_name?(attr)
         @attributes_hash[attr] = {}
-        @type_map[attr] = :generic
+        @type_map[attr] = :string
         self.index attr
       end
     end
@@ -293,7 +362,7 @@ module XapianDb
           # Is it a method name with options?
           if args.last.is_a? Hash
             options = args.last
-            assert_valid_keys options, :weight
+            assert_valid_keys options, :weight, :prefixed, :no_split
             @indexed_methods_hash[args.first] = IndexOptions.new(options.merge(:block => block))
           else
             add_indexes_from args
@@ -308,14 +377,18 @@ module XapianDb
       @ignore_expression = block
     end
 
-    # Define a base query to select one or all objects of the indexed class. The reason for a
+# Define a base query to select one or all objects of the indexed class. The reason for a
     # base query is to optimize the query avoiding th 1+n problematic. The base query should only
     # include joins(...) and includes(...) calls.
     # @param [expression] a base query expression
     # @example Include the adresses
     #   blueprint.base_query Person.includes(:addresses)
-    def base_query(expression)
-      @_base_query = expression
+    def base_query(expression = nil, &block)
+      if expression
+        warn "xapian_db: directly passing a base query in a blueprint configuration is deprecated, wrap them in a block"
+        block = lambda { expression }
+      end
+      @lazy_base_query = block
     end
 
     # Define the natural sort order.
@@ -330,14 +403,16 @@ module XapianDb
     # Options for an indexed method
     class IndexOptions
 
-      attr_reader :weight, :block
+      attr_reader :weight, :prefixed, :no_split, :block
 
       # Constructor
       # @param [Hash] options
       # @option options [Integer] :weight (1) The weight for the indexed value
       def initialize(options = {})
-        @weight = options[:weight] || 1
-        @block  = options[:block]
+        @weight   = options[:weight] || 1
+        @prefixed = options[:prefixed].nil? ? true : options[:prefixed]
+        @no_split = options[:no_split]
+        @block    = options[:block]
       end
 
     end

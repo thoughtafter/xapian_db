@@ -19,7 +19,7 @@ module XapianDb
         # Update an object in the index
         # @param [Object] obj An instance of a class with a blueprint configuration
         def index(obj, commit=true)
-          blueprint = XapianDb::DocumentBlueprint.blueprint_for(obj.class)
+          blueprint = XapianDb::DocumentBlueprint.blueprint_for(obj.class.name)
           indexer   = XapianDb::Indexer.new(XapianDb.database, blueprint)
           doc       = indexer.build_document_for(obj)
           XapianDb.database.store_doc(doc)
@@ -36,7 +36,7 @@ module XapianDb
         # Update or delete a xapian document belonging to an object depending on the ignore_if logic(if present)
         # @param [Object] object An instance of a class with a blueprint configuration
         def reindex(object, commit=true)
-          blueprint = XapianDb::DocumentBlueprint.blueprint_for object.class
+          blueprint = XapianDb::DocumentBlueprint.blueprint_for object.class.name
           if blueprint.should_index?(object)
             index object, commit
           else
@@ -50,27 +50,29 @@ module XapianDb
         # @option options [Boolean] :verbose (false) Should the reindexing give status informations?
         def reindex_class(klass, options={})
           opts = {:verbose => false}.merge(options)
-          blueprint = XapianDb::DocumentBlueprint.blueprint_for klass
-          adapter = blueprint._adapter || XapianDb::Config.adapter || Adapters::GenericAdapter
-          primary_key = adapter.primary_key_for(klass)
+          blueprint = XapianDb::DocumentBlueprint.blueprint_for klass.name
+          primary_key = blueprint._adapter.primary_key_for(klass)
           XapianDb.database.delete_docs_of_class(klass)
-          blueprint  = XapianDb::DocumentBlueprint.blueprint_for(klass)
           indexer    = XapianDb::Indexer.new(XapianDb.database, blueprint)
-          base_query = blueprint._base_query || klass
+          if blueprint.lazy_base_query
+            base_query = blueprint.lazy_base_query.call
+          else
+            base_query = klass
+          end
           show_progressbar = false
           obj_count = base_query.count
           if opts[:verbose]
             show_progressbar = defined?(ProgressBar)
             puts "reindexing #{obj_count} objects of #{klass}..."
-            pbar = ProgressBar.new("Status", obj_count) if show_progressbar
+            pbar = ProgressBar.create(:title => "Status", :total => obj_count, :format => ' %t %e %B %p%%') if show_progressbar
           end
 
           # Process the objects in batches to reduce the memory footprint
           nr_of_batches = (obj_count / BATCH_SIZE) + 1
           nr_of_batches.times do |batch|
-            base_query.all(:offset => batch * BATCH_SIZE, :limit => BATCH_SIZE, :order => klass.order_condition(primary_key)).each do |obj|
+            base_query.offset(batch * BATCH_SIZE).limit(BATCH_SIZE).order(klass.order_condition(primary_key)).each do |obj|
               reindex obj, false
-              pbar.inc if show_progressbar
+              pbar.increment if show_progressbar
             end
           end
           XapianDb.database.commit

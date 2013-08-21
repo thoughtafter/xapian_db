@@ -2,6 +2,7 @@ require 'rubygems'
 require 'fileutils'
 require 'simplecov'
 require 'date'
+require 'pry'
 
 SimpleCov.start do
   add_filter '/spec/'
@@ -9,6 +10,7 @@ SimpleCov.start do
 end
 
 require File.dirname(__FILE__) + '/../lib/xapian_db'
+require File.dirname(__FILE__) + '/../lib/xapian_db/adapters/generic_adapter'
 require File.dirname(__FILE__) + '/basic_mocks'
 require File.dirname(__FILE__) + '/orm_mocks'
 require File.dirname(__FILE__) + '/beanstalk_mock'
@@ -33,5 +35,16 @@ RSpec.configure do |config|
     end
     ActiveRecordObject.reset
     DatamapperObject.reset
+
+    XapianDb.setup do |config|
+      config.adapter :generic
+      config.term_min_length 1
+      config.term_splitter_count 0
+      config.enable_query_flag Xapian::QueryParser::FLAG_WILDCARD
+      config.enable_query_flag Xapian::QueryParser::FLAG_BOOLEAN
+      config.enable_query_flag Xapian::QueryParser::FLAG_BOOLEAN_ANY_CASE
+      config.enable_query_flag Xapian::QueryParser::FLAG_SPELLING_CORRECTION
+      config.disable_query_flag Xapian::QueryParser::FLAG_PHRASE
+    end
   end
 end
